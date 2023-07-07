@@ -16,17 +16,13 @@ class BaseServerApplication:
         Base server application wrapper for socket transmission
         :param addr: tuple: (ip: string, port: int)-
         """
-
         # bind socket and set to non-blocking io
         if option is not None:
             self.socket = socket.socket(**option)
         else:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.bind(addr)
-        self.socket.listen()
-        self.socket.setblocking(False)
-        print(f"[*] server listening on {SERVER_HOST}:{SERVER_PORT}")
 
+        self.addr = addr
         self.sel = selectors.DefaultSelector()
         self.clients = []
 
@@ -77,6 +73,11 @@ class BaseServerApplication:
         return
 
     def run(self):
+        self.socket.bind(self.addr)
+        self.socket.listen()
+        self.socket.setblocking(False)
+        print(f"[*] server listening on {SERVER_HOST}:{SERVER_PORT}")
+
         self.sel.register(self.socket, selectors.EVENT_READ, self.accept)
 
         while True:
