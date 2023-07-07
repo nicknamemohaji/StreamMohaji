@@ -10,7 +10,7 @@ null_marker = 0x05
 undefined_marker = 0x06
 reference_marker = 0x07
 ecma_array_marker = 0x08
-object_end_marker = 0x09
+object_end_marker = bytes.fromhex('000009')    # utf8_empty + 0x09
 strict_array_marker = 0x0A
 date_marker = 0x0B
 long_string_marker = 0x0C
@@ -22,20 +22,50 @@ typed_object_marker = 0x10
 class AMF0:
     def __init__(self, *args, **kwargs):
         self.obj = []
-        pass
+        self.__dict__.update(kwargs)
+
+        if len(args) == 1:
+            self.parse(args[0])
+        return
 
     def parse(self, msg: bytes):
-        print(msg)
-        # TODO
         while len(msg) > 0:
             res, msg = self.parse_types(msg)
             self.obj.append(res)
-            print(res)
         return self.obj
 
     def compile(self):
-        # TODO
-        pass
+        res = bytes()
+        for data in self.obj:
+            res += self.compile_amf0(data)
+        return res
+
+    def compile_amf0(self, data):
+        # TODO implement amf0 fully
+        res = bytes()
+        if isinstance(data, str):
+            if len(data) > 0xffff:
+                res += bytes.fromhex(f'{long_string_marker}') + struct.pack('>Q', len(data)) + data.encode()
+            else:
+                res += bytes.fromhex(f'{string_marker}') + struct.pack('>I', len(data)) + data.encode()
+        elif isinstance(data, float):
+            res += bytes.fromhex(f'{number_marker}') + struct.pack('>d', data)
+        elif isinstance(data, dict):
+            res += self.compile_obj(data)
+        elif isinstance(data, bool):
+            res += bytes.fromhex(f'{boolean_marker}') + struct.pack('>?', data)
+        else:
+            raise NotImplementedError(f"type {type(data)} is not implemented...")
+        return res
+
+    def compile_obj(self, obj: dict):
+        # TODO support amf0 fully
+        res = bytes.fromhex(f'{object_marker}')
+        for key in obj.keys():
+            res += struct.pack('>I', len(key)) + key.compile()
+            res += self.compile_amf0(obj[key])
+        res += object_end_marker
+        return res
 
     def parse_types(self, msg: bytes):
         type = msg[0]
@@ -49,10 +79,10 @@ class AMF0:
         elif type == object_marker:
             # first, calculate where the object end is...
             idx = 1
-            while msg[idx:idx+3] != bytes.fromhex('000009'):
+            while msg[idx:idx+3] != object_end_marker:
                 idx += 1
             obj = msg[1:idx]
-            msg = msg[idx:]
+            msg = msg[idx+3:]
 
             # object notation is *(`keylen`:u16, `key`:string, `value_type`:marker, `value`: Any.. )
             obj_res = {}
@@ -67,9 +97,9 @@ class AMF0:
         elif type in (null_marker, undefined_marker):
             return None, msg[1:]
         elif type == reference_marker:
-            pass  # TODO
+            pass  # TODO implement amf0 fully
         elif type == strict_array_marker:
-            pass  # TODO
+            pass  # TODO implement amf0 fully
         elif type == date_marker:
             return datetime.fromtimestamp(float.fromhex(msg[1:9].hex())), msg[10:]
         elif type == long_string_marker:
@@ -78,6 +108,6 @@ class AMF0:
         elif type == xml_document_marker:
             mlen = int.from_bytes(msg[1:5], 'big')
             xml = msg[5:5 + mlen]
-            pass  # TODO
+            pass  # TODO implement amf0 fully
         elif type == typed_object_marker:
-            pass  # TODO
+            pass  # TODO implement amf0 fully

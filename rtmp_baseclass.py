@@ -6,6 +6,7 @@ import socket
 import selectors
 import os
 import uuid
+import time
 
 
 class RtmpBaseServer:
@@ -33,7 +34,7 @@ class RtmpBaseServer:
         stream = self.streams[sock]
 
         # check EOT
-        data = sock.recv((stream.max_size + 18) * 2)    # prepare for buffer stack..
+        data = sock.recv((stream.max_size + 18) * 2)  # prepare for buffer stack..
         if data:
             print(f"[{datetime.now().isoformat()}] received data from ({sock.getpeername()}): length ({len(data)})")
             # call callback function
@@ -108,13 +109,23 @@ class RtmpBaseServer:
         print(f"[{datetime.now().isoformat()}] handshake with ({addr[0]}:{addr[1]}) finished")
         client.setblocking(False)
 
-        # save stream socket
+        # >>> make stream object
         stream_id = uuid.uuid4().__str__()
         stream_path = self.save_path + stream_id + "\\"
         os.makedirs(stream_path)
         stream = StreamObject(sock=client,
-                              max_size=1024 * 1024,  # max_size should be set after first type0 packet is sent
-                              stream_id=stream_id, stream_path=stream_path)
+                              max_size=1024 * 1024,  # default 1MB, will be set in `start_stream`
+                              stream_id=stream_id,
+                              stream_path=stream_path,
+                              start_time=time.time(),
+                              ack_window_size=1024 * 8,
+                              sequence_size=1536 * 2 + 1)  # default 8k.. TODO check bandwidth
+
+        self.start_stream(stream)
+        print(f"[{datetime.now().isoformat()}] stream made for ({addr[0]}:{addr[1]}) - stream id ({stream.stream_id})")
+        # <<< stream object made
+
+        # save stream object
         self.streams[client] = stream
         self.clients.append(client)
         self.sel.register(client, selectors.EVENT_READ, self.recv)
@@ -160,4 +171,51 @@ class RtmpBaseServer:
         finally:
             self.socket.close()
 
+        return
+
+    def start_stream(self, stream: StreamObject):
+        sock = stream.sock
+        sock.setblocking(True)
+
+        # connect >>>>>
+
+        # 1. receive control message
+        packet = sock.recv(stream.max_size)
+        r = RTMP()
+        p1, p2 = r.parse(packet, stream)
+
+        # 2. receive command message (NetConnection.connect)
+        connect_message = p2
+        print(p2.header.__dict__)
+        print(p2.body.__dict__)
+
+        # 3. send window ack
+        # TODO check buffer size and bandwidth
+        packet = RTMP()
+        sock.send(
+            packet.make_window_ack(stream=stream, size=stream.max_size * 2)
+        )
+
+        # 4. send bandwidth
+        # TODO check bandwidth
+        packet = RTMP()
+        sock.send(packet.make_control_set_chunk(stream=stream, size=stream.max_size))
+
+        # 5. receive window ack
+        packet = stream.sock.recv(stream.max_size)
+
+        # 6. send user control message
+        packet = RTMP()
+        sock.send(packet)
+
+        # 7. send command message (_result)
+        packet = RTMP()
+        sock.send(packet)
+
+        # <<< connect finish
+        # startStream >>>>
+
+        # <<<startStream finish
+
+        sock.setblocking(False)
         return
